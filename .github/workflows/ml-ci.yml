@@ -1,0 +1,100 @@
+name: Student Result Prediction CI-CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  ml-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # Step 1: Checkout repository
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Step 2: Setup Python
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Step 3: Install dependencies
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # Step 4: Train ML model
+      - name: Train ML Model
+        run: python train_model.py
+
+      # Step 5: Run Quality Gate
+      - name: Run Quality Gate
+        run: python quality_gate.py
+
+      # Step 6: Run Automated Tests
+      - name: Run Unit Tests
+        run: python -m unittest discover -v
+
+      # Step 7: Build Docker Image
+      - name: Build Docker Image
+        run: |
+          docker build -t student-result-ml:${{ github.sha }} .
+
+      # Step 8: Run Docker Container
+      - name: Run Docker Container
+        run: |
+          docker run -d \
+            --name student-result-container \
+            -p 5000:5000 \
+            student-result-ml:${{ github.sha }}
+
+      # Step 9: Health Check
+      - name: Verify Application Health
+        run: |
+          for i in {1..15}
+          do
+            if curl -fsS http://localhost:5000/health; then
+              echo "Application is healthy"
+              exit 0
+            fi
+            echo "Waiting for application..."
+            sleep 2
+          done
+
+          echo "Health check failed"
+          exit 1
+
+      # Step 10: Test Prediction API
+      - name: Test Prediction API
+        run: |
+          curl -f -X POST http://localhost:5000/predict \
+          -H "Content-Type: application/json" \
+          -d '{
+            "attendance": 90,
+            "internal_marks": 85,
+            "assignment_marks": 90,
+            "previous_score": 88
+          }'
+
+      # Step 11: Upload Model Artifact
+      - name: Upload Model Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: student-result-model
+          path: student_result_model.pkl
+
+      # Step 12: Display Docker Logs
+      - name: Display Docker Logs
+        if: always()
+        run: docker logs student-result-container || true
+
+      # Step 13: Cleanup
+      - name: Cleanup Docker Container
+        if: always()
+        run: docker rm -f student-result-container || true
